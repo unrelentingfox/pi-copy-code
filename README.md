@@ -92,22 +92,8 @@ Edit before copying:
 
 Arguments combine in any order, so `/copy-code edit quotes` edits a quote before copying it.
 
-Choose how the picker is presented:
-
-```text
-/copy-code inline
-/copy-code overlay
-```
-
-`overlay` (the default) floats the picker above the transcript. `inline` takes over the interactive area in place, like
-Pi's built-in menus. Set a persistent default with the `PI_COPY_CODE_PICKER` environment variable:
-
-```bash
-export PI_COPY_CODE_PICKER=inline
-```
-
-An `inline` or `overlay` argument overrides the environment default for that invocation. An unset or unrecognized value
-keeps the `overlay` default. The presentation applies to both the picker and the edit screen.
+Add `inline` or `overlay` to choose the picker presentation for one invocation; see [Configuration](#configuration)
+for the persistent default.
 
 Edit mode opens `$VISUAL`, then `$EDITOR`, with the selected text in private temporary storage; set one of these
 variables to your preferred editor command before using edit mode. On Windows, only `.exe` and `.com` targets spawn
@@ -127,6 +113,30 @@ When the picker opens:
 
 Response navigation wraps at both ends. The first picker item, `All code blocks` or `All quotes`, joins all blocks in
 the selected response with blank lines.
+
+## Configuration
+
+`/copy-code` reads an optional `copy-code.json` file from Pi's agent directory (`~/.pi/agent/` by default, or
+`$PI_CODING_AGENT_DIR`). The file is read on each invocation, so changes apply without `/reload`.
+
+```json
+{
+  "presentation": "inline"
+}
+```
+
+| Key            | Values                  | Default   | Effect                                                                                                         |
+| -------------- | ----------------------- | --------- | -------------------------------------------------------------------------------------------------------------- |
+| `presentation` | `"overlay"`, `"inline"` | `overlay` | `overlay` floats the picker above the transcript. `inline` replaces the editor area, like Pi's built-in menus. |
+
+The presentation applies to both the picker and the edit screen. Override it for one invocation with an argument:
+
+```text
+/copy-code inline
+/copy-code overlay
+```
+
+A missing file uses the defaults. An unreadable or invalid file also uses the defaults and shows a warning.
 
 ## Clipboard behavior
 

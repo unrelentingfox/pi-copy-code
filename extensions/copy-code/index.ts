@@ -4,7 +4,7 @@ import type {
   ExtensionContext,
   Theme,
 } from "@earendil-works/pi-coding-agent";
-import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { isKeyRelease, isKeyRepeat, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { KeyId, MarkdownTheme, TUI } from "@earendil-works/pi-tui";
 import { Buffer } from "node:buffer";
@@ -55,9 +55,9 @@ export type PickerPresentation = "overlay" | "inline";
 
 export const DEFAULT_PRESENTATION: PickerPresentation = "overlay";
 
-// Environment variable supplying a persistent default presentation. A command
-// argument still wins for a single invocation.
-export const PRESENTATION_ENV_VAR = "PI_COPY_CODE_PICKER";
+// Optional user config file in Pi's agent directory. A command argument still
+// wins for a single invocation.
+export const CONFIG_FILE_NAME = "copy-code.json";
 
 type PickerResult = {
   action: CopyAction;
@@ -461,12 +461,44 @@ export function filterCopyChoices(items: CopyChoice[], query: string): CopyChoic
   return scored.map((entry) => entry.item);
 }
 
-// Resolves the presentation default from the environment. An unset or
-// unrecognized value keeps the built-in default rather than failing, so a typo
+export type CopyCodeConfig = { presentation: PickerPresentation; warning?: string };
+
+// Reads `<agentDir>/copy-code.json`. A missing file is the normal case. An
+// unreadable or invalid file keeps the default and reports a warning, so a typo
 // never blocks a copy.
-export function presentationFromEnv(env: NodeJS.ProcessEnv = process.env): PickerPresentation {
-  const raw = env[PRESENTATION_ENV_VAR]?.trim().toLowerCase();
-  return raw === "inline" || raw === "overlay" ? raw : DEFAULT_PRESENTATION;
+export function loadConfig(configPath: string = path.join(getAgentDir(), CONFIG_FILE_NAME)): CopyCodeConfig {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { presentation: DEFAULT_PRESENTATION };
+    }
+    return { presentation: DEFAULT_PRESENTATION, warning: `Cannot read ${configPath}` };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { presentation: DEFAULT_PRESENTATION, warning: `Invalid JSON in ${configPath}` };
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { presentation: DEFAULT_PRESENTATION, warning: `${configPath} must contain a JSON object` };
+  }
+
+  const value = (parsed as Record<string, unknown>).presentation;
+  if (value === undefined) {
+    return { presentation: DEFAULT_PRESENTATION };
+  }
+  if (value === "inline" || value === "overlay") {
+    return { presentation: value };
+  }
+  return {
+    presentation: DEFAULT_PRESENTATION,
+    warning: `${configPath}: "presentation" must be "inline" or "overlay"`,
+  };
 }
 
 export type ParsedCommandArgs =
@@ -474,11 +506,11 @@ export type ParsedCommandArgs =
   | { ok: false };
 
 // Parses `/copy-code` arguments in any order. An explicit inline/overlay token
-// overrides the environment default for this invocation only.
-export function parseCommandArgs(args: string, envDefault: PickerPresentation): ParsedCommandArgs {
+// overrides the configured default for this invocation only.
+export function parseCommandArgs(args: string, configuredDefault: PickerPresentation): ParsedCommandArgs {
   let enterAction: CopyAction = "copy";
   let kind: BlockKind = "code";
-  let presentation = envDefault;
+  let presentation = configuredDefault;
 
   for (const token of args.trim().toLowerCase().split(/\s+/).filter(Boolean)) {
     if (token === "edit") {
@@ -1084,6 +1116,7 @@ type ExtensionRuntime = {
   copyNative: (text: string) => string | undefined;
   stdout: Stdout;
   requestFullRender?: (ctx: AnyContext) => void | Promise<void>;
+  loadConfig: () => CopyCodeConfig;
 };
 
 function kindArgs(kind: BlockKind): string {
@@ -1116,6 +1149,7 @@ export default function copyCodeExtension(
     copyNative,
     stdout: process.stdout,
     requestFullRender,
+    loadConfig: () => loadConfig(),
     ...runtimeOverrides,
   };
   let unsubscribeTerminalInput: (() => void) | undefined;
@@ -1137,7 +1171,11 @@ export default function copyCodeExtension(
       await ctx.waitForIdle();
     }
 
-    const parsed = parseCommandArgs(args, presentationFromEnv());
+    const config = runtime.loadConfig();
+    if (config.warning) {
+      ctx.ui.notify(`Copy-code config ignored: ${config.warning}`, "warning");
+    }
+    const parsed = parseCommandArgs(args, config.presentation);
     if (!parsed.ok) {
       ctx.ui.notify("Usage: /copy-code [edit] [quotes] [inline|overlay]", "warning");
       return;

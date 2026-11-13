@@ -1073,6 +1073,7 @@ function registerForClipboardTests({ nativeCommand, isTTY = false, useProduction
   const runtime = {
     copyNative: () => nativeCommand,
     stdout: { isTTY, write(data) { harness.writes.push(data); return true; } },
+    loadConfig: () => ({ presentation: "overlay" }),
   };
   if (!useProductionRender) {
     runtime.requestFullRender = () => harness.renderCalls.push(true);
@@ -1139,7 +1140,7 @@ test("/copy-code quotes opens the picker in quote mode with code reachable by to
   assert.deepEqual(harness.notifications, [{ message: "Copied 1 line via pbcopy", type: "info" }]);
 });
 
-function registerForTerminalInputTests() {
+function registerForTerminalInputTests({ config = { presentation: "overlay" } } = {}) {
   const handlers = new Map();
   const listeners = [];
   const cleanupCalls = [];
@@ -1156,7 +1157,7 @@ function registerForTerminalInputTests() {
     registerShortcut(shortcut, options) {
       shortcuts.push({ shortcut, options });
     },
-  });
+  }, { loadConfig: () => config });
 
   return { handlers, listeners, cleanupCalls, commands, shortcuts };
 }
@@ -1243,13 +1244,60 @@ test("parseCommandArgs accepts inline and overlay in any order and rejects unkno
   assert.deepEqual(extension.parseCommandArgs("floating", "overlay"), { ok: false });
 });
 
-test("presentationFromEnv reads the override and falls back to the default", () => {
-  assert.equal(extension.presentationFromEnv({}), "overlay");
-  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "inline" }), "inline");
-  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "  INLINE  " }), "inline");
-  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "overlay" }), "overlay");
-  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "nonsense" }), "overlay");
-  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "" }), "overlay");
+function withConfigFile(contents, run) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "copy-code-config-"));
+  const file = path.join(dir, "copy-code.json");
+  try {
+    if (contents !== undefined) fs.writeFileSync(file, contents);
+    return run(file);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("loadConfig defaults to overlay when the config file is absent or omits presentation", () => {
+  withConfigFile(undefined, (file) => assert.deepEqual(extension.loadConfig(file), { presentation: "overlay" }));
+  withConfigFile("{}", (file) => assert.deepEqual(extension.loadConfig(file), { presentation: "overlay" }));
+});
+
+test("loadConfig reads inline and overlay presentation values", () => {
+  withConfigFile('{ "presentation": "inline" }', (file) =>
+    assert.deepEqual(extension.loadConfig(file), { presentation: "inline" }),
+  );
+  withConfigFile('{ "presentation": "overlay" }', (file) =>
+    assert.deepEqual(extension.loadConfig(file), { presentation: "overlay" }),
+  );
+});
+
+test("loadConfig keeps the default and warns on invalid content", () => {
+  for (const [contents, fragment] of [
+    ["not json", "Invalid JSON"],
+    ["[]", "must contain a JSON object"],
+    ["null", "must contain a JSON object"],
+    ['{ "presentation": "floating" }', '"presentation" must be "inline" or "overlay"'],
+    ['{ "presentation": 1 }', '"presentation" must be "inline" or "overlay"'],
+  ]) {
+    withConfigFile(contents, (file) => {
+      const config = extension.loadConfig(file);
+      assert.equal(config.presentation, "overlay");
+      assert.ok(config.warning?.includes(fragment), `${contents} -> ${config.warning}`);
+      assert.ok(config.warning?.includes(file));
+    });
+  }
+});
+
+test("loadConfig defaults to the copy-code.json file in Pi's agent directory", () => {
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "copy-code-agent-"));
+  try {
+    process.env.PI_CODING_AGENT_DIR = dir;
+    fs.writeFileSync(path.join(dir, extension.CONFIG_FILE_NAME), '{ "presentation": "inline" }');
+    assert.deepEqual(extension.loadConfig(), { presentation: "inline" });
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("customOptions omits options for inline and requests an overlay otherwise", () => {
@@ -1257,39 +1305,57 @@ test("customOptions omits options for inline and requests an overlay otherwise",
   assert.deepEqual(extension.customOptions("overlay"), { overlay: true });
 });
 
-test("copy-code passes the requested presentation through to ctx.ui.custom", async () => {
+test("copy-code passes the configured or requested presentation through to ctx.ui.custom", async () => {
   const markdown = ["```js", "console.log('one')", "```", "", "```js", "console.log('two')", "```"].join("\n");
 
-  async function runWith(args, env) {
-    const { commands, listeners, cleanupCalls } = registerForTerminalInputTests();
+  async function runWith(args, config) {
+    const { commands, listeners, cleanupCalls } = registerForTerminalInputTests({ config });
     const seen = [];
+    const notifications = [];
     const ctx = createTerminalInputContext({
       listeners,
       cleanupCalls,
+      notifications,
       markdown,
       custom(_factory, options) {
         seen.push(options);
         return Promise.resolve(undefined);
       },
     });
-
-    const previous = process.env.PI_COPY_CODE_PICKER;
-    if (env === undefined) delete process.env.PI_COPY_CODE_PICKER;
-    else process.env.PI_COPY_CODE_PICKER = env;
-    try {
-      await commands[0].options.handler(args, ctx);
-    } finally {
-      if (previous === undefined) delete process.env.PI_COPY_CODE_PICKER;
-      else process.env.PI_COPY_CODE_PICKER = previous;
-    }
-
-    return seen;
+    await commands[0].options.handler(args, ctx);
+    return { seen, notifications };
   }
 
-  assert.deepEqual(await runWith("", undefined), [{ overlay: true }]);
-  assert.deepEqual(await runWith("inline", undefined), [undefined]);
-  assert.deepEqual(await runWith("", "inline"), [undefined]);
-  assert.deepEqual(await runWith("overlay", "inline"), [{ overlay: true }]);
+  assert.deepEqual((await runWith("", { presentation: "overlay" })).seen, [{ overlay: true }]);
+  assert.deepEqual((await runWith("inline", { presentation: "overlay" })).seen, [undefined]);
+  assert.deepEqual((await runWith("", { presentation: "inline" })).seen, [undefined]);
+  assert.deepEqual((await runWith("overlay", { presentation: "inline" })).seen, [{ overlay: true }]);
+
+  const warned = await runWith("", { presentation: "overlay", warning: "Invalid JSON in /x/copy-code.json" });
+  assert.deepEqual(warned.seen, [{ overlay: true }]);
+  assert.deepEqual(warned.notifications[0], {
+    message: "Copy-code config ignored: Invalid JSON in /x/copy-code.json",
+    type: "warning",
+  });
+});
+
+test("copy-code shortcuts use the configured presentation", async () => {
+  const markdown = ["```js", "one", "```", "", "```js", "two", "```"].join("\n");
+  const { shortcuts, listeners, cleanupCalls } = registerForTerminalInputTests({ config: { presentation: "inline" } });
+  const seen = [];
+  const ctx = createTerminalInputContext({
+    listeners,
+    cleanupCalls,
+    markdown,
+    custom(_factory, options) {
+      seen.push(options);
+      return Promise.resolve(undefined);
+    },
+  });
+
+  await shortcuts.find(({ shortcut }) => shortcut === "ctrl+alt+c").options.handler(ctx);
+
+  assert.deepEqual(seen, [undefined]);
 });
 
 test("copy-code rejects an unknown token with the documented usage message", async () => {
