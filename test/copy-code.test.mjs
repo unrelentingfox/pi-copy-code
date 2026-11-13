@@ -1117,7 +1117,7 @@ test("/copy-code reports missing quotes separately from missing code and rejects
 
   assert.deepEqual(harness.notifications, [
     { message: "No quoted text found in recent assistant messages", type: "warning" },
-    { message: "Usage: /copy-code [edit] [quotes]", type: "warning" },
+    { message: "Usage: /copy-code [edit] [quotes] [inline|overlay]", type: "warning" },
     { message: "No quoted text found in recent assistant messages", type: "warning" },
   ]);
 });
@@ -1206,3 +1206,100 @@ async function waitUntil(predicate, timeoutMs = 2000) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+test("parseCommandArgs accepts inline and overlay in any order and rejects unknown tokens", () => {
+  assert.deepEqual(extension.parseCommandArgs("", "overlay"), {
+    ok: true,
+    enterAction: "copy",
+    kind: "code",
+    presentation: "overlay",
+  });
+
+  assert.deepEqual(extension.parseCommandArgs("inline", "overlay"), {
+    ok: true,
+    enterAction: "copy",
+    kind: "code",
+    presentation: "inline",
+  });
+
+  assert.deepEqual(extension.parseCommandArgs("quotes INLINE edit", "overlay"), {
+    ok: true,
+    enterAction: "edit",
+    kind: "quote",
+    presentation: "inline",
+  });
+
+  // An explicit token overrides an inline environment default.
+  assert.deepEqual(extension.parseCommandArgs("overlay", "inline"), {
+    ok: true,
+    enterAction: "copy",
+    kind: "code",
+    presentation: "overlay",
+  });
+
+  // Absent a token the environment default is preserved.
+  assert.equal(extension.parseCommandArgs("quotes", "inline").presentation, "inline");
+
+  assert.deepEqual(extension.parseCommandArgs("floating", "overlay"), { ok: false });
+});
+
+test("presentationFromEnv reads the override and falls back to the default", () => {
+  assert.equal(extension.presentationFromEnv({}), "overlay");
+  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "inline" }), "inline");
+  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "  INLINE  " }), "inline");
+  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "overlay" }), "overlay");
+  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "nonsense" }), "overlay");
+  assert.equal(extension.presentationFromEnv({ PI_COPY_CODE_PICKER: "" }), "overlay");
+});
+
+test("customOptions omits options for inline and requests an overlay otherwise", () => {
+  assert.equal(extension.customOptions("inline"), undefined);
+  assert.deepEqual(extension.customOptions("overlay"), { overlay: true });
+});
+
+test("copy-code passes the requested presentation through to ctx.ui.custom", async () => {
+  const markdown = ["```js", "console.log('one')", "```", "", "```js", "console.log('two')", "```"].join("\n");
+
+  async function runWith(args, env) {
+    const { commands, listeners, cleanupCalls } = registerForTerminalInputTests();
+    const seen = [];
+    const ctx = createTerminalInputContext({
+      listeners,
+      cleanupCalls,
+      markdown,
+      custom(_factory, options) {
+        seen.push(options);
+        return Promise.resolve(undefined);
+      },
+    });
+
+    const previous = process.env.PI_COPY_CODE_PICKER;
+    if (env === undefined) delete process.env.PI_COPY_CODE_PICKER;
+    else process.env.PI_COPY_CODE_PICKER = env;
+    try {
+      await commands[0].options.handler(args, ctx);
+    } finally {
+      if (previous === undefined) delete process.env.PI_COPY_CODE_PICKER;
+      else process.env.PI_COPY_CODE_PICKER = previous;
+    }
+
+    return seen;
+  }
+
+  assert.deepEqual(await runWith("", undefined), [{ overlay: true }]);
+  assert.deepEqual(await runWith("inline", undefined), [undefined]);
+  assert.deepEqual(await runWith("", "inline"), [undefined]);
+  assert.deepEqual(await runWith("overlay", "inline"), [{ overlay: true }]);
+});
+
+test("copy-code rejects an unknown token with the documented usage message", async () => {
+  const { commands, listeners, cleanupCalls } = registerForTerminalInputTests();
+  const notifications = [];
+  const ctx = createTerminalInputContext({ listeners, cleanupCalls, notifications, markdown: "```js\none\n```" });
+
+  await commands[0].options.handler("floating", ctx);
+
+  assert.deepEqual(notifications, [
+    { message: "Usage: /copy-code [edit] [quotes] [inline|overlay]", type: "warning" },
+  ]);
+});

@@ -92,6 +92,23 @@ Edit before copying:
 
 Arguments combine in any order, so `/copy-code edit quotes` edits a quote before copying it.
 
+Choose how the picker is presented:
+
+```text
+/copy-code inline
+/copy-code overlay
+```
+
+`overlay` (the default) floats the picker above the transcript. `inline` takes over the interactive area in place, like
+Pi's built-in menus. Set a persistent default with the `PI_COPY_CODE_PICKER` environment variable:
+
+```bash
+export PI_COPY_CODE_PICKER=inline
+```
+
+An `inline` or `overlay` argument overrides the environment default for that invocation. An unset or unrecognized value
+keeps the `overlay` default. The presentation applies to both the picker and the edit screen.
+
 Edit mode opens `$VISUAL`, then `$EDITOR`, with the selected text in private temporary storage; set one of these
 variables to your preferred editor command before using edit mode. On Windows, only `.exe` and `.com` targets spawn
 directly. All other values, including extension-less names and `.cmd`/`.bat` shims, use the explicitly constructed,

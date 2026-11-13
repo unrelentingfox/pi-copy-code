@@ -48,6 +48,17 @@ export const DEFAULT_MESSAGE_CAP = 10;
 
 type CopyAction = "copy" | "edit";
 
+// How the picker and editor screens occupy the interactive area. "overlay"
+// floats above the transcript; "inline" takes over the interactive area in
+// place, matching Pi's built-in menus.
+export type PickerPresentation = "overlay" | "inline";
+
+export const DEFAULT_PRESENTATION: PickerPresentation = "overlay";
+
+// Environment variable supplying a persistent default presentation. A command
+// argument still wins for a single invocation.
+export const PRESENTATION_ENV_VAR = "PI_COPY_CODE_PICKER";
+
 type PickerResult = {
   action: CopyAction;
   code: string;
@@ -450,6 +461,40 @@ export function filterCopyChoices(items: CopyChoice[], query: string): CopyChoic
   return scored.map((entry) => entry.item);
 }
 
+// Resolves the presentation default from the environment. An unset or
+// unrecognized value keeps the built-in default rather than failing, so a typo
+// never blocks a copy.
+export function presentationFromEnv(env: NodeJS.ProcessEnv = process.env): PickerPresentation {
+  const raw = env[PRESENTATION_ENV_VAR]?.trim().toLowerCase();
+  return raw === "inline" || raw === "overlay" ? raw : DEFAULT_PRESENTATION;
+}
+
+export type ParsedCommandArgs =
+  | { ok: true; enterAction: CopyAction; kind: BlockKind; presentation: PickerPresentation }
+  | { ok: false };
+
+// Parses `/copy-code` arguments in any order. An explicit inline/overlay token
+// overrides the environment default for this invocation only.
+export function parseCommandArgs(args: string, envDefault: PickerPresentation): ParsedCommandArgs {
+  let enterAction: CopyAction = "copy";
+  let kind: BlockKind = "code";
+  let presentation = envDefault;
+
+  for (const token of args.trim().toLowerCase().split(/\s+/).filter(Boolean)) {
+    if (token === "edit") {
+      enterAction = "edit";
+    } else if (token === "quotes") {
+      kind = "quote";
+    } else if (token === "inline" || token === "overlay") {
+      presentation = token;
+    } else {
+      return { ok: false };
+    }
+  }
+
+  return { ok: true, enterAction, kind, presentation };
+}
+
 export function createCopyChoices(blocks: CodeBlock[], kind: BlockKind = "code"): CopyChoice[] {
   const choices = blocks.map((block) => ({ label: describeBlock(block, kind), code: block.code, lang: block.lang }));
   if (blocks.length <= 1) {
@@ -784,6 +829,7 @@ async function chooseCopyAction(
   kind: BlockKind,
   ctx: AnyContext,
   enterAction: CopyAction,
+  presentation: PickerPresentation = DEFAULT_PRESENTATION,
 ): Promise<PickerResult> {
   // Only shortcut past the picker when the requested kind has a single block in
   // a single message; otherwise the picker is needed to navigate messages or
@@ -798,8 +844,14 @@ async function chooseCopyAction(
   return await ctx.ui.custom<PickerResult>(
     (tui, theme, _keybindings, done) =>
       new CodeBlockPickerComponent(messagesByKind, kind, theme, mdTheme, tui, enterAction, done),
-    { overlay: true },
+    customOptions(presentation),
   );
+}
+
+// Pi draws a custom screen inline unless the overlay option is supplied, so the
+// inline presentation passes no options at all.
+export function customOptions(presentation: PickerPresentation): { overlay: true } | undefined {
+  return presentation === "inline" ? undefined : { overlay: true };
 }
 
 export function splitEditorCommand(command: string): string[] {
@@ -1017,10 +1069,14 @@ export class ExternalEditorComponent {
   }
 }
 
-async function editCodeBeforeCopy(code: string, ctx: AnyContext): Promise<EditorResult> {
+async function editCodeBeforeCopy(
+  code: string,
+  ctx: AnyContext,
+  presentation: PickerPresentation = DEFAULT_PRESENTATION,
+): Promise<EditorResult> {
   return await ctx.ui.custom<EditorResult>(
     (tui, _theme, _keybindings, done) => new ExternalEditorComponent(code, tui, done),
-    { overlay: true },
+    customOptions(presentation),
   );
 }
 
@@ -1081,18 +1137,12 @@ export default function copyCodeExtension(
       await ctx.waitForIdle();
     }
 
-    let enterAction: CopyAction = "copy";
-    let kind: BlockKind = "code";
-    for (const token of args.trim().toLowerCase().split(/\s+/).filter(Boolean)) {
-      if (token === "edit") {
-        enterAction = "edit";
-      } else if (token === "quotes") {
-        kind = "quote";
-      } else {
-        ctx.ui.notify("Usage: /copy-code [edit] [quotes]", "warning");
-        return;
-      }
+    const parsed = parseCommandArgs(args, presentationFromEnv());
+    if (!parsed.ok) {
+      ctx.ui.notify("Usage: /copy-code [edit] [quotes] [inline|overlay]", "warning");
+      return;
     }
+    const { enterAction, kind, presentation } = parsed;
 
     const messagesByKind = collectAssistantBlocks(ctx, DEFAULT_MESSAGE_CAP);
     if (messagesByKind[kind].length === 0) {
@@ -1101,7 +1151,7 @@ export default function copyCodeExtension(
       return;
     }
 
-    const result = await chooseCopyAction(messagesByKind, kind, ctx, enterAction);
+    const result = await chooseCopyAction(messagesByKind, kind, ctx, enterAction, presentation);
     if (result === undefined) {
       ctx.ui.notify("Copy cancelled", "info");
       return;
@@ -1109,7 +1159,7 @@ export default function copyCodeExtension(
 
     let text: string;
     if (result.action === "edit") {
-      const edited = await editCodeBeforeCopy(result.code, ctx);
+      const edited = await editCodeBeforeCopy(result.code, ctx, presentation);
       if (edited === undefined) {
         ctx.ui.notify("Copy cancelled", "info");
         return;

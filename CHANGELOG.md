@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Added a configurable picker presentation: `/copy-code inline` and `/copy-code overlay` arguments and the
+  `PI_COPY_CODE_PICKER` environment variable choose between the floating overlay (default) and an inline screen that
+  takes over the interactive area like Pi's built-in menus. The choice applies to the picker and the edit screen.
+
 ## [0.4.0] - 2026-09-08
 
 ### Added
