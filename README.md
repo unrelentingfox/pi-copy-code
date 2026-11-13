@@ -92,9 +92,6 @@ Edit before copying:
 
 Arguments combine in any order, so `/copy-code edit quotes` edits a quote before copying it.
 
-Add `inline` or `overlay` to choose the picker presentation for one invocation; see [Configuration](#configuration)
-for the persistent default.
-
 Edit mode opens `$VISUAL`, then `$EDITOR`, with the selected text in private temporary storage; set one of these
 variables to your preferred editor command before using edit mode. On Windows, only `.exe` and `.com` targets spawn
 directly. All other values, including extension-less names and `.cmd`/`.bat` shims, use the explicitly constructed,
@@ -129,12 +126,7 @@ the selected response with blank lines.
 | -------------- | ----------------------- | --------- | -------------------------------------------------------------------------------------------------------------- |
 | `presentation` | `"overlay"`, `"inline"` | `overlay` | `overlay` floats the picker above the transcript. `inline` replaces the editor area, like Pi's built-in menus. |
 
-The presentation applies to both the picker and the edit screen. Override it for one invocation with an argument:
-
-```text
-/copy-code inline
-/copy-code overlay
-```
+The presentation applies to both the picker and the edit screen.
 
 A missing file uses the defaults. An unreadable or invalid file also uses the defaults and shows a warning.
 

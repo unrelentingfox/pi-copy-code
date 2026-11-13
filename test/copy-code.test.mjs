@@ -1118,7 +1118,7 @@ test("/copy-code reports missing quotes separately from missing code and rejects
 
   assert.deepEqual(harness.notifications, [
     { message: "No quoted text found in recent assistant messages", type: "warning" },
-    { message: "Usage: /copy-code [edit] [quotes] [inline|overlay]", type: "warning" },
+    { message: "Usage: /copy-code [edit] [quotes]", type: "warning" },
     { message: "No quoted text found in recent assistant messages", type: "warning" },
   ]);
 });
@@ -1208,42 +1208,6 @@ async function waitUntil(predicate, timeoutMs = 2000) {
   }
 }
 
-test("parseCommandArgs accepts inline and overlay in any order and rejects unknown tokens", () => {
-  assert.deepEqual(extension.parseCommandArgs("", "overlay"), {
-    ok: true,
-    enterAction: "copy",
-    kind: "code",
-    presentation: "overlay",
-  });
-
-  assert.deepEqual(extension.parseCommandArgs("inline", "overlay"), {
-    ok: true,
-    enterAction: "copy",
-    kind: "code",
-    presentation: "inline",
-  });
-
-  assert.deepEqual(extension.parseCommandArgs("quotes INLINE edit", "overlay"), {
-    ok: true,
-    enterAction: "edit",
-    kind: "quote",
-    presentation: "inline",
-  });
-
-  // An explicit token overrides an inline environment default.
-  assert.deepEqual(extension.parseCommandArgs("overlay", "inline"), {
-    ok: true,
-    enterAction: "copy",
-    kind: "code",
-    presentation: "overlay",
-  });
-
-  // Absent a token the environment default is preserved.
-  assert.equal(extension.parseCommandArgs("quotes", "inline").presentation, "inline");
-
-  assert.deepEqual(extension.parseCommandArgs("floating", "overlay"), { ok: false });
-});
-
 function withConfigFile(contents, run) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "copy-code-config-"));
   const file = path.join(dir, "copy-code.json");
@@ -1305,7 +1269,7 @@ test("customOptions omits options for inline and requests an overlay otherwise",
   assert.deepEqual(extension.customOptions("overlay"), { overlay: true });
 });
 
-test("copy-code passes the configured or requested presentation through to ctx.ui.custom", async () => {
+test("copy-code passes the configured presentation through to ctx.ui.custom", async () => {
   const markdown = ["```js", "console.log('one')", "```", "", "```js", "console.log('two')", "```"].join("\n");
 
   async function runWith(args, config) {
@@ -1327,9 +1291,7 @@ test("copy-code passes the configured or requested presentation through to ctx.u
   }
 
   assert.deepEqual((await runWith("", { presentation: "overlay" })).seen, [{ overlay: true }]);
-  assert.deepEqual((await runWith("inline", { presentation: "overlay" })).seen, [undefined]);
   assert.deepEqual((await runWith("", { presentation: "inline" })).seen, [undefined]);
-  assert.deepEqual((await runWith("overlay", { presentation: "inline" })).seen, [{ overlay: true }]);
 
   const warned = await runWith("", { presentation: "overlay", warning: "Invalid JSON in /x/copy-code.json" });
   assert.deepEqual(warned.seen, [{ overlay: true }]);
@@ -1356,16 +1318,4 @@ test("copy-code shortcuts use the configured presentation", async () => {
   await shortcuts.find(({ shortcut }) => shortcut === "ctrl+alt+c").options.handler(ctx);
 
   assert.deepEqual(seen, [undefined]);
-});
-
-test("copy-code rejects an unknown token with the documented usage message", async () => {
-  const { commands, listeners, cleanupCalls } = registerForTerminalInputTests();
-  const notifications = [];
-  const ctx = createTerminalInputContext({ listeners, cleanupCalls, notifications, markdown: "```js\none\n```" });
-
-  await commands[0].options.handler("floating", ctx);
-
-  assert.deepEqual(notifications, [
-    { message: "Usage: /copy-code [edit] [quotes] [inline|overlay]", type: "warning" },
-  ]);
 });

@@ -55,8 +55,7 @@ export type PickerPresentation = "overlay" | "inline";
 
 export const DEFAULT_PRESENTATION: PickerPresentation = "overlay";
 
-// Optional user config file in Pi's agent directory. A command argument still
-// wins for a single invocation.
+// Optional user config file in Pi's agent directory.
 export const CONFIG_FILE_NAME = "copy-code.json";
 
 type PickerResult = {
@@ -499,32 +498,6 @@ export function loadConfig(configPath: string = path.join(getAgentDir(), CONFIG_
     presentation: DEFAULT_PRESENTATION,
     warning: `${configPath}: "presentation" must be "inline" or "overlay"`,
   };
-}
-
-export type ParsedCommandArgs =
-  | { ok: true; enterAction: CopyAction; kind: BlockKind; presentation: PickerPresentation }
-  | { ok: false };
-
-// Parses `/copy-code` arguments in any order. An explicit inline/overlay token
-// overrides the configured default for this invocation only.
-export function parseCommandArgs(args: string, configuredDefault: PickerPresentation): ParsedCommandArgs {
-  let enterAction: CopyAction = "copy";
-  let kind: BlockKind = "code";
-  let presentation = configuredDefault;
-
-  for (const token of args.trim().toLowerCase().split(/\s+/).filter(Boolean)) {
-    if (token === "edit") {
-      enterAction = "edit";
-    } else if (token === "quotes") {
-      kind = "quote";
-    } else if (token === "inline" || token === "overlay") {
-      presentation = token;
-    } else {
-      return { ok: false };
-    }
-  }
-
-  return { ok: true, enterAction, kind, presentation };
 }
 
 export function createCopyChoices(blocks: CodeBlock[], kind: BlockKind = "code"): CopyChoice[] {
@@ -1175,12 +1148,20 @@ export default function copyCodeExtension(
     if (config.warning) {
       ctx.ui.notify(`Copy-code config ignored: ${config.warning}`, "warning");
     }
-    const parsed = parseCommandArgs(args, config.presentation);
-    if (!parsed.ok) {
-      ctx.ui.notify("Usage: /copy-code [edit] [quotes] [inline|overlay]", "warning");
-      return;
+    const { presentation } = config;
+
+    let enterAction: CopyAction = "copy";
+    let kind: BlockKind = "code";
+    for (const token of args.trim().toLowerCase().split(/\s+/).filter(Boolean)) {
+      if (token === "edit") {
+        enterAction = "edit";
+      } else if (token === "quotes") {
+        kind = "quote";
+      } else {
+        ctx.ui.notify("Usage: /copy-code [edit] [quotes]", "warning");
+        return;
+      }
     }
-    const { enterAction, kind, presentation } = parsed;
 
     const messagesByKind = collectAssistantBlocks(ctx, DEFAULT_MESSAGE_CAP);
     if (messagesByKind[kind].length === 0) {

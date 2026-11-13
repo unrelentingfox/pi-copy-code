@@ -9,8 +9,7 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added an optional `copy-code.json` config file in Pi's agent directory. Its `presentation` key chooses between the
   floating overlay (default) and an inline screen that replaces the editor area like Pi's built-in menus. The choice
-  applies to the picker and the edit screen, and `/copy-code inline` or `/copy-code overlay` overrides it for one
-  invocation.
+  applies to the picker and the edit screen.
 
 ## [0.4.0] - 2026-09-08
 
